@@ -1,11 +1,15 @@
 require("dotenv").config();
 
-const nodemailer = require("nodemailer");
 const express = require("express");
 const cors = require("cors");
+const nodemailer = require("nodemailer");
 const rateLimit = require("express-rate-limit");
 
 const app = express();
+
+// ========================================
+// RENDER / PROXY CONFIGURATION
+// ========================================
 
 app.set("trust proxy", 1);
 
@@ -13,33 +17,43 @@ app.set("trust proxy", 1);
 // CORS CONFIGURATION
 // ========================================
 
-// const allowedOrigin = "https://worldtextileindia.com";
 const allowedOrigins = [
   "https://worldtextileindia.com",
   "https://www.worldtextileindia.com",
+
+  // Local development
   "http://localhost:5173",
+  "http://127.0.0.1:5173",
+
+  // If you also use localhost:3000, uncomment this
+  // "http://localhost:3000",
 ];
 
 const corsOptions = {
   origin: function (origin, callback) {
+    console.log("=================================");
+    console.log("CORS REQUEST");
+    console.log("Origin:", origin);
+    console.log("=================================");
+
     // Allow requests without Origin
-    // Example: Postman, server-to-server requests
+    // Example: Postman, curl, server-to-server
     if (!origin) {
       return callback(null, true);
     }
 
-    if (origin === allowedOrigin) {
+    // Check allowed origins
+    if (allowedOrigins.includes(origin)) {
+      console.log("CORS Allowed:", origin);
       return callback(null, true);
     }
 
-    console.log("Blocked CORS Origin:", origin);
+    console.log("CORS Blocked:", origin);
 
     return callback(
-      new Error("Not allowed by CORS")
+      new Error(`Not allowed by CORS: ${origin}`)
     );
   },
-
-  credentials: true,
 
   methods: [
     "GET",
@@ -62,11 +76,29 @@ const corsOptions = {
   optionsSuccessStatus: 204,
 };
 
-// Apply CORS BEFORE ROUTES
+// ========================================
+// CORS MIDDLEWARE
+// MUST BE BEFORE ROUTES
+// ========================================
+
 app.use(cors(corsOptions));
 
-// Explicitly handle OPTIONS requests
+// Explicitly handle OPTIONS / preflight requests
 app.options(/.*/, cors(corsOptions));
+
+// ========================================
+// REQUEST LOGGING
+// ========================================
+
+app.use((req, res, next) => {
+  console.log("---------------------------------");
+  console.log("Request Method:", req.method);
+  console.log("Request URL:", req.originalUrl);
+  console.log("Request Origin:", req.headers.origin || "No Origin");
+  console.log("---------------------------------");
+
+  next();
+});
 
 // ========================================
 // BODY PARSER
@@ -105,6 +137,26 @@ const transporter = nodemailer.createTransport({
   host: "relay-hosting.secureserver.net",
   port: 25,
   secure: false,
+
+  // Optional authentication if your GoDaddy SMTP requires it.
+  // Uncomment if needed.
+  //
+  // auth: {
+  //   user: process.env.EMAIL_USER,
+  //   pass: process.env.EMAIL_PASSWORD,
+  // },
+});
+
+// ========================================
+// SMTP CONNECTION TEST
+// ========================================
+
+transporter.verify((error, success) => {
+  if (error) {
+    console.error("SMTP Connection Error:", error);
+  } else {
+    console.log("SMTP Server Ready");
+  }
 });
 
 // ========================================
@@ -113,6 +165,18 @@ const transporter = nodemailer.createTransport({
 
 app.get("/", (req, res) => {
   res.status(200).send("Server Running Successfully");
+});
+
+// ========================================
+// HEALTH CHECK JSON
+// ========================================
+
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Backend is running",
+    environment: process.env.NODE_ENV || "production",
+  });
 });
 
 // ========================================
@@ -136,6 +200,20 @@ app.post(
   formLimiter,
   async (req, res) => {
     try {
+      console.log("Contact form request received");
+
+      console.log("Request body:", {
+        name: req.body.name,
+        email: req.body.email,
+        phone: req.body.phone,
+        company: req.body.company,
+        message: req.body.message,
+      });
+
+      // ========================================
+      // GET FORM DATA
+      // ========================================
+
       const {
         name,
         email,
@@ -162,6 +240,19 @@ app.post(
       }
 
       // ========================================
+      // CHECK EMAIL CONFIG
+      // ========================================
+
+      if (!process.env.EMAIL_USER) {
+        console.error("EMAIL_USER is missing");
+
+        return res.status(500).json({
+          success: false,
+          message: "Email configuration is missing",
+        });
+      }
+
+      // ========================================
       // ADMIN EMAIL
       // ========================================
 
@@ -170,44 +261,56 @@ app.post(
 
         to: process.env.EMAIL_USER,
 
-        subject:
-          "New Enquiry - World Textile India",
+        subject: "New Enquiry - World Textile India",
 
         html: `
-          <h2>New Website Enquiry</h2>
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>New Website Enquiry</title>
+          </head>
 
-          <table
-            border="1"
-            cellpadding="10"
-            cellspacing="0"
-          >
+          <body>
 
-            <tr>
-              <td><b>Name</b></td>
-              <td>${name}</td>
-            </tr>
+            <h2>New Website Enquiry</h2>
 
-            <tr>
-              <td><b>Email</b></td>
-              <td>${email}</td>
-            </tr>
+            <table
+              border="1"
+              cellpadding="10"
+              cellspacing="0"
+              style="border-collapse: collapse;"
+            >
 
-            <tr>
-              <td><b>Phone</b></td>
-              <td>${phone}</td>
-            </tr>
+              <tr>
+                <td><strong>Name</strong></td>
+                <td>${name}</td>
+              </tr>
 
-            <tr>
-              <td><b>Company</b></td>
-              <td>${company}</td>
-            </tr>
+              <tr>
+                <td><strong>Email</strong></td>
+                <td>${email}</td>
+              </tr>
 
-            <tr>
-              <td><b>Message</b></td>
-              <td>${message}</td>
-            </tr>
+              <tr>
+                <td><strong>Phone</strong></td>
+                <td>${phone}</td>
+              </tr>
 
-          </table>
+              <tr>
+                <td><strong>Company</strong></td>
+                <td>${company}</td>
+              </tr>
+
+              <tr>
+                <td><strong>Message</strong></td>
+                <td>${message}</td>
+              </tr>
+
+            </table>
+
+          </body>
+          </html>
         `,
       });
 
@@ -224,34 +327,52 @@ app.post(
           "Thank You for Contacting World Textile India",
 
         html: `
-          <h2>Hello ${name},</h2>
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>Thank You</title>
+          </head>
 
-          <p>
-            Thank you for contacting
-            <b>World Textile India</b>.
-          </p>
+          <body>
 
-          <p>
-            We have received your enquiry successfully.
-          </p>
+            <h2>Hello ${name},</h2>
 
-          <p>
-            Our team will contact you shortly.
-          </p>
+            <p>
+              Thank you for contacting
+              <strong>World Textile India</strong>.
+            </p>
 
-          <br>
+            <p>
+              We have received your enquiry successfully.
+            </p>
 
-          Regards,<br>
+            <p>
+              Our team will contact you shortly.
+            </p>
 
-          <b>World Textile India Team</b>
+            <br>
+
+            <p>
+              Regards,<br>
+              <strong>World Textile India Team</strong>
+            </p>
+
+          </body>
+          </html>
         `,
       });
 
-      // Wait for both emails
+      // ========================================
+      // WAIT FOR BOTH EMAILS
+      // ========================================
+
       await Promise.all([
         adminEmail,
         customerEmail,
       ]);
+
+      console.log("Both emails sent successfully");
 
       // ========================================
       // SUCCESS RESPONSE
@@ -262,6 +383,7 @@ app.post(
         message:
           "Your enquiry has been submitted successfully.",
       });
+
     } catch (error) {
       console.error(
         "Contact Form Error:",
@@ -277,13 +399,51 @@ app.post(
 );
 
 // ========================================
+// 404 HANDLER
+// ========================================
+
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "Route not found",
+    path: req.originalUrl,
+    method: req.method,
+  });
+});
+
+// ========================================
+// GLOBAL ERROR HANDLER
+// ========================================
+
+app.use((error, req, res, next) => {
+  console.error("Global Error:", error);
+
+  // CORS error
+  if (error.message && error.message.includes("Not allowed by CORS")) {
+    return res.status(403).json({
+      success: false,
+      message: "CORS policy blocked this request",
+      error: error.message,
+    });
+  }
+
+  return res.status(500).json({
+    success: false,
+    message: "Internal Server Error",
+  });
+});
+
+// ========================================
 // SERVER
 // ========================================
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(
-    `Production Server Started on port ${PORT}`
-  );
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("=================================");
+  console.log("Production Server Started");
+  console.log("PORT:", PORT);
+  console.log("HOST: 0.0.0.0");
+  console.log("Environment:", process.env.NODE_ENV || "production");
+  console.log("=================================");
 });
